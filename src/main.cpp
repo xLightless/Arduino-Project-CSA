@@ -11,10 +11,7 @@
 // Define values of input pins
 #define BUTTON_PIN 8
 #define TILT_PIN 9
-#define POT_PIN A1
-
-
-
+#define POT_PIN A
 
 
 
