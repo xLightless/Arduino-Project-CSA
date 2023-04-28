@@ -1,10 +1,16 @@
 #include <Arduino.h>
 
+#include <LiquidCrystal.h>
+
+#include <dht.h>
+
 /*
 
   Arduino Project
 
   Use a photoresistor to transmit data to another arduino and vise versa.
+
+  Communication is 9 bytes long so where 1 byte = 8 bits, 9 * 8 = 72 / 5 = 14400 seconds per message.
 
 */
 
@@ -12,16 +18,42 @@
 #define BUTTON_PIN 8
 #define TILT_PIN 9
 #define POT_PIN A1
+#define JOYSTICK_SW_PIN 4
+#define JOYSTICK_PIN_Y A2
+#define FAN_MOTOR_PIN A5
+
+// One digit 7 segment display
+#define DISPLAY_A 8
+#define DISPLAY_B 9
+#define DISPLAY_C 10
+#define DISPLAY_D 11
+#define DISPLAY_E 12
+#define DISPLAY_F 13
+//#define DISPLAY_G 13
+
+// Temperature and Humidity Sensor
+dht DHT;
+#define DHT_PIN 6
+
+// Ultrasonic Sensor
+#define ECHO_PIN 5
+#define TRIG_PIN 6
+
+// LCD display
+//int RS = 4;
+//int E = 2;
+//int D4 = A5;
+//int D5 = A4;
+//int D6 = A3;
+//int D7 = A2;
+LiquidCrystal lcd(4, 2, A5, A4, A3, A2);
+
+float analogCoeff = 100 * 8;      // x / 100 * 8 provides a range between 0..99.
+long distance, duration;
 
 
 
-
-
-
-
-
-
-int ledState = LOW;             // Set the state of the LED
+int ledState = LOW;               // Set the state of the LED
 
 char encrypt(char in_char)
 {
@@ -46,27 +78,134 @@ void setup()
   // Set communication LED PIN to OUTPUT
   pinMode(3, OUTPUT);
   
+  // Set any other explicit pins to read/write data
+  pinMode(POT_PIN, INPUT);
+  pinMode(JOYSTICK_SW_PIN, INPUT_PULLUP);
+  pinMode(FAN_MOTOR_PIN, OUTPUT);
+  
+  pinMode(DISPLAY_A, OUTPUT);
+  pinMode(DISPLAY_B, OUTPUT);
+  pinMode(DISPLAY_C, OUTPUT);
+  pinMode(DISPLAY_D, OUTPUT);
+  pinMode(DISPLAY_E, OUTPUT);
+  pinMode(DISPLAY_F, OUTPUT);
+//  pinMode(DISPLAY_G, OUTPUT);
+
+  pinMode(ECHO_PIN, INPUT);
+  pinMode(TRIG_PIN, OUTPUT);
+
+  // Initialize LCD Display
+  lcd.begin(16, 2);
+
   // Initialize serial communication at 9600 bits per second:
   Serial.begin(9600);
 
-  // Set any other explicit pins
-  pinMode(BUTTON_PIN, OUTPUT);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 }
+
+
+/*
+
+  COMMUNICATION INPUTS
+
+*/
+
+
+
+int readPotInput() {
+  // Handles potentiometer readings
+  int potSensorValue = analogRead(POT_PIN);
+  
+  if (potSensorValue <= 511) {
+    // Read Potentiometer as OFF state
+    potSensorValue = 0;
+    return potSensorValue;
+  }
+
+  // Read Potentiometer as HIGH state
+  potSensorValue = 7;
+  return potSensorValue;
+}
+
+int isSwitchPressed; // Store value of the pressed joystick
+
+int readJoystickSwitchInput() {
+  // Store actuated values of the joystick
+
+  int switchY;
+  
+  // Vertical motion of joystick. Central location is 1023/2. LEFT = 0, RIGHT = 1023
+  switchY = analogRead(JOYSTICK_PIN_Y);
+
+  // If joystick is pressed down
+  isSwitchPressed = 0;
+  int switchValue = digitalRead(JOYSTICK_SW_PIN);
+  if (switchValue == isSwitchPressed) {
+    return 1;
+  }
+
+  // Return state as off
+  return 0;
+}
+
+float readJoystickPitchInput() {
+    // Read the joystick pitch value range
+
+    float pitchValue = analogRead(JOYSTICK_PIN_Y);
+    return (pitchValue / 100) * 8;
+}
+
+int readUltrasonicSensor() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  duration = pulseIn(ECHO_PIN, HIGH);
+  distance = duration / 58.2;
+
+  if ((distance > 0) && (distance < 100)) {
+    return distance;
+  }
+
+  return 0;
+}
+
+long getDistance() {
+  // Get the distance between the sensor and object
+
+  long distance = readUltrasonicSensor();
+  return distance;
+}
+
+int getLCDContrast() {
+  // Get contrast of LCD display
+  
+  int sensorValue = analogRead(POT_PIN);
+  int contrastPercent = map(sensorValue, 0, 1023, 101, 0); // return screen contrast as a percentage
+
+  if ((contrastPercent > 0) && (contrastPercent < 100)) {
+    return contrastPercent;
+  }
+
+  return 0;
+}
+
+//void readLCDInputs() {
+//  int sensorValue = analogRead(POT_PIN);
+//  int contrastPercent = map(sensorValue, 0, 1023, 101, 0); // return screen contrast as a percentage
+//  long distance = readUltrasonicSensor();
+//
+//  return :
+//}
+
+
+
+
+/*
+
+  COMMUNICATION TRANSMITTER AND RECIEVER
+
+*/
 
 const long txInterval = 200;              // interval at which to tx bit (milliseconds)
 int tx_state = 0;                         // The state at which the transmission is occuring. Range is between 0 and 20.
@@ -88,13 +227,63 @@ void readInputs()
   // Gets project inputs
   // Uses txButton, txTilt, txPot, txA, txB, txC, txD
 
-  txButton = digitalRead(BUTTON_PIN);
-  txTilt = 1;
-  txPot = 7;
-  txA = 99;
-  txB = 99;
-  txC = 99;
-  txD = 99;
+  txButton    = 0;     // Read switch value from joystick
+  txTilt      = 0;
+  txPot       = readPotInput();
+  txA         = getDistance();      // Read distance from the ultasonic sensor
+  txB         = getLCDContrast();
+  txC         = 0;
+  txD         = 0;
+}
+
+char rxButtonState, rxTiltState, rxPotState, rxAState, rxBState, rxCState, rxDState; // Store previously recieved values into these variables to continue actuation until the next message
+
+
+void toggleFanOutput() {
+  // Keep the fan in the previous state until the next recieved instruction.
+
+  // Adjust fan speed based on joystick Y
+  Serial.println(rxAState,DEC);
+
+  if (rxAState > 50) {
+    analogWrite(FAN_MOTOR_PIN, 1023);
+
+  }
+}
+
+void writeDisplayValues() {
+
+  // Set to 7 on the one-digit-display
+  if (rxPotState == 7) {
+    digitalWrite(DISPLAY_A, HIGH);
+    digitalWrite(DISPLAY_B, HIGH);
+    digitalWrite(DISPLAY_C, HIGH);
+    digitalWrite(DISPLAY_D, LOW);
+    digitalWrite(DISPLAY_E, LOW);
+    digitalWrite(DISPLAY_F, LOW);
+//    digitalWrite(DISPLAY_G, LOW);
+  }
+  // Set to 0 on the one-digit-display
+  else if (rxPotState == 0) {
+    digitalWrite(DISPLAY_A, HIGH);
+    digitalWrite(DISPLAY_B, HIGH);
+    digitalWrite(DISPLAY_C, HIGH);
+    digitalWrite(DISPLAY_D, HIGH);
+    digitalWrite(DISPLAY_E, HIGH);
+    digitalWrite(DISPLAY_F, HIGH);
+//    digitalWrite(DISPLAY_G, LOW);
+  }
+}
+
+void writeLCDValues() {
+  lcd.setCursor(0,0);
+  lcd.print("Distance CM: ");
+  lcd.print(rxA, DEC);
+  
+  lcd.setCursor(0,1);
+  lcd.print("Contrast: ");
+  lcd.print(rxB, DEC);
+  
 }
 
 void writeOutputs()
@@ -102,14 +291,51 @@ void writeOutputs()
   // Outputs breadboard projects to serial
   // Uses rxButton, rxTilt, rxPot, rxA, rxB, rxC, rxD;
 
+  // Store RX values into intermedium states
+  rxButtonState = rxButton;
+  rxTiltState = rxTilt;
+  rxPotState = rxPot;
+  rxAState = rxA;
+  rxBState = rxB;
+  rxCState = rxC;
+  rxDState = rxD;
+
+  writeDisplayValues();
+  writeLCDValues();
+}
+
+void printMessage() {
+  Serial.print("Button Value = ");
   Serial.println(rxButton, DEC);
+  
+  Serial.print("Tilt Value = ");
   Serial.println(rxTilt, DEC);
+
+  Serial.print("Potentiometer Value = ");
   Serial.println(rxPot, DEC);
+
+  Serial.print("A Value = ");
   Serial.println(rxA, DEC);
+
+  Serial.print("B Value = ");
   Serial.println(rxB, DEC);
+
+  Serial.print("C Value = ");
   Serial.println(rxC, DEC);
+
+  Serial.print("D Value = ");
   Serial.println(rxD, DEC);
 }
+
+
+
+
+
+
+
+
+
+
 
 #define TX_START_OF_TEXT -1
 int tx_string_state = TX_START_OF_TEXT;
@@ -256,7 +482,6 @@ void rxChar()
             break;
             
             case ETX:
-            Serial.println("0x71");
             rxButton = rxBuffer[0];
             rxTilt = rxBuffer[1];
             rxPot = rxBuffer[2];
@@ -264,7 +489,8 @@ void rxChar()
             rxB = rxBuffer[4];
             rxC = rxBuffer[5];
             rxD = rxBuffer[6];
-            writeOutputs();
+            printMessage();
+            Serial.println("0x71");
             rx_index = 0;
             break;
             
@@ -277,6 +503,18 @@ void rxChar()
         else
         {
           Serial.println("Rx error");
+
+          // Prevent previous states from updating in case of an error.
+          rxButton = txButton;
+          rxTilt = txTilt;
+          rxPot = txPot;
+          rxA = txA;
+          rxB = txB;
+          rxC = txC;
+          rxD = txD;
+
+
+          
         }
         for (i = 0; i < 10; i++)  /* Print the recieved bit on the monitor - debug purposes */
         {
@@ -301,15 +539,11 @@ void rxChar()
 
 }
 
-
-
-// the loop routine runs over and over again forever:
+// Loop routine for handling arduino controls
 void loop()
-{
+{  
+  // Transmit the data to another arduino and receive the other arduinos transmit message.
   txChar();
   rxChar();
-
-  // Execute mini project code below
-  // If communication message has the correct range values from 0 to 99 then actuate
-
+  writeOutputs();
 }
